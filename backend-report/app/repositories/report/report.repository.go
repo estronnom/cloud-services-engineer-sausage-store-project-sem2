@@ -93,7 +93,7 @@ func (service *repositoryMongo) FindOne(ctx context.Context, query interface{}) 
 }
 
 func (service *repositoryMongo) collection() *mongo.Collection {
-	return service.db.Database("sausage-store").Collection("reports")
+	return service.db.Database("reports").Collection("reports")
 }
 
 func (service *repositoryMongo) Close(ctx context.Context) error {

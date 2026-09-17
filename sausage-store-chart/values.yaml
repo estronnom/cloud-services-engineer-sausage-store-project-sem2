@@ -28,7 +28,7 @@ frontend:
       cpu: "50m"
       memory: "64Mi"
     limits:
-      cpu: "100m"
+      cpu: "150m"
       memory: "128Mi"
   nginxConf: nginx.conf
 
@@ -58,9 +58,9 @@ backend:
   resources:
     requests:
       cpu: "200m"
-      memory: "256Mi"
+      memory: "192Mi"
     limits:
-      cpu: "500m"
+      cpu: "600m"
       memory: "512Mi"
   containerPort: 8080
   livenessProbe:
@@ -104,7 +104,7 @@ backend-report:
   resources:
     requests:
       cpu: "75m"
-      memory: "96Mi"
+      memory: "64Mi"
     limits:
       cpu: "150m"
       memory: "192Mi"
@@ -163,7 +163,7 @@ infra:
     resources:
       requests:
         cpu: "75m"
-        memory: "256Mi"
+        memory: "200Mi"
       limits:
         cpu: "150m"
         memory: "512Mi"
