@@ -83,9 +83,9 @@ backend:
           controlledValues: RequestsAndLimits
           minAllowed:
             cpu: "200m"
-            memory: "256Mi"
+            memory: "192Mi"
           maxAllowed:
-            cpu: "500m"
+            cpu: "600m"
             memory: "512Mi"
 
 backend-report:
