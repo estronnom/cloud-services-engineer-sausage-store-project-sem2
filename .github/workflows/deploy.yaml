@@ -11,7 +11,6 @@ env:
   NEXUS_HELM_REPO_PASSWORD: ${{ secrets.NEXUS_HELM_REPO_PASSWORD }}
   SAUSAGE_STORE_NAMESPACE: ${{ secrets.NAMESPACE }}
   KUBE_CONFIG: ${{ secrets.KUBE_CONFIG }}
-  VAULT_TOKEN: ${{ secrets.VAULT_TOKEN }}
 
 jobs:
   # Сборка и пуш образов в докерхаб:
@@ -72,19 +71,126 @@ jobs:
             tags: ${{ secrets.DOCKER_USER }}/sausage-backend-report:${{ steps.image_tag.outputs.tag }}
   # Упаковываем helm-чарт и пушим его в Nexus
   add_helm_chart_to_nexus:
-      name: Add Helm Chart To Nexus
-      runs-on: ubuntu-latest
-      needs: build_and_push_to_docker_hub
-# ${{ needs.build_and_push_to_docker_hub.outputs.image_tag }}
-      steps:
-      #### Опишите необходимые шаги
-      # todo add helm lint
+    name: Lint, package, and publish Helm chart
+    runs-on: ubuntu-latest
+    needs: build_and_push_to_docker_hub
+
+    outputs:
+      chart_version: ${{ steps.chart_version.outputs.version }}
+    steps:
+      - name: Check out the repository
+        uses: actions/checkout@v4
+
+      - name: Set up Helm
+        uses: azure/setup-helm@v4
+
+      - name: Install yq
+        shell: bash
+        run: |
+          curl --fail --location --silent --show-error \
+            --output "$RUNNER_TEMP/yq" \
+            https://github.com/mikefarah/yq/releases/download/v4.44.3/yq_linux_amd64
+          chmod +x "$RUNNER_TEMP/yq"
+          echo "$RUNNER_TEMP" >> "$GITHUB_PATH"
+
+      - name: Lint Helm charts
+        shell: bash
+        run: |
+          set -euo pipefail
+          helm lint sausage-store-chart/charts/backend --strict \
+            -f <(yq '.backend + {"global": .global}' sausage-store-chart/values.yaml)
+
+          helm lint sausage-store-chart/charts/backend-report --strict \
+            -f <(yq '."backend-report" + {"global": .global}' sausage-store-chart/values.yaml)
+
+          helm lint sausage-store-chart/charts/frontend --strict \
+            -f <(yq '.frontend + {"global": .global}' sausage-store-chart/values.yaml)
+
+          helm lint sausage-store-chart/charts/infra --strict \
+            -f <(yq '.infra + {"global": .global}' sausage-store-chart/values.yaml)
+
+      - name: Set chart version
+        id: chart_version
+        shell: bash
+        env:
+          IMAGE_TAG: ${{ needs.build_and_push_to_docker_hub.outputs.image_tag }}
+        run: |
+          echo "version=0.1.0-${IMAGE_TAG}" >> "$GITHUB_OUTPUT"
+
+      - name: Package Helm chart
+        shell: bash
+        env:
+          CHART_VERSION: ${{ steps.chart_version.outputs.version }}
+          IMAGE_TAG: ${{ needs.build_and_push_to_docker_hub.outputs.image_tag }}
+        run: |
+          helm package sausage-store-chart \
+            --version "$CHART_VERSION" \
+            --app-version "$IMAGE_TAG"
+
+      - name: Publish Helm chart to Nexus
+        shell: bash
+        env:
+          CHART_VERSION: ${{ steps.chart_version.outputs.version }}
+        run: |
+          curl --fail --location --show-error \
+            --user "$NEXUS_HELM_REPO_USER:$NEXUS_HELM_REPO_PASSWORD" \
+            --upload-file "sausage-store-${CHART_VERSION}.tgz" \
+            "${NEXUS_HELM_REPO%/}/"
 
   # Деплоим приложения в кластер Kubernetes с помощью helm-чарт
   deploy_helm_chart_to_kubernetes:
-      name: Deploy Helm Chart To Kubernetes
-      runs-on: ubuntu-latest
-      needs: add_helm_chart_to_nexus
+    name: Deploy Helm chart to Kubernetes
+    runs-on: ubuntu-latest
+    needs:
+      - add_helm_chart_to_nexus
+    steps:
+      - name: Set up Helm
+        uses: azure/setup-helm@v4
 
-      steps:
-      #### Опишите необходимые шаги
+      - name: Configure Kubernetes access
+        shell: bash
+        run: |
+          mkdir -p "$RUNNER_TEMP/kube"
+          echo "$KUBE_CONFIG" | base64 --decode > "$RUNNER_TEMP/kube/config"
+          chmod 600 "$RUNNER_TEMP/kube/config"
+          echo "KUBECONFIG=$RUNNER_TEMP/kube/config" >> "$GITHUB_ENV"
+
+      - name: Add Nexus Helm repository
+        shell: bash
+        run: |
+          helm repo add sausage-store "$NEXUS_HELM_REPO" \
+            --username "$NEXUS_HELM_REPO_USER" \
+            --password "$NEXUS_HELM_REPO_PASSWORD"
+          helm repo update
+
+      - name: Deploy chart
+        shell: bash
+        env:
+          CHART_VERSION: ${{ needs.add_helm_chart_to_nexus.outputs.chart_version }}
+          IMAGE_TAG: ${{ needs.build_and_push_to_docker_hub.outputs.image_tag }}
+        run: |
+          set -euo pipefail
+          : "${SAUSAGE_STORE_NAMESPACE:?NAMESPACE must be configured}"
+          helm upgrade --install sausage-store sausage-store/sausage-store \
+            --namespace "$SAUSAGE_STORE_NAMESPACE" \
+            --version "$CHART_VERSION" \
+            --wait \
+            --timeout 10m
+            --set-string backend.image.tag="$IMAGE_TAG" \
+            --set-string frontend.image.tag="$IMAGE_TAG" \
+            --set-string backend-report.image.tag="$IMAGE_TAG" \
+            --set-string backend.env.POSTGRES_URI="jdbc:postgresql://postgresql:5432/${{ vars.POSTGRES_DATABASE }}" \
+            --set-string backend.env.POSTGRES_USER="${{ secrets.POSTGRES_USER }}" \
+            --set-string backend.env.POSTGRES_PASSWORD="${{ secrets.POSTGRES_PASSWORD }}" \
+            --set-string backend.env.MONGODB_URI="mongodb://${{ secrets.MONGO_USER }}:${{ secrets.MONGO_PASSWORD }}@mongodb:27017/
+            ${{ vars.MONGO_DATABASE }}" \
+            --set-string backend-report.env.MONGODB_URI="mongodb://${{ secrets.MONGO_USER }}:${{ secrets.MONGO_PASSWORD }}@mongodb:27017/
+            ${{ vars.MONGO_DATABASE }}" \
+            --set-string infra.postgresql.env.POSTGRES_USER="${{ secrets.POSTGRES_USER }}" \
+            --set-string infra.postgresql.env.POSTGRES_PASSWORD="${{ secrets.POSTGRES_PASSWORD }}" \
+            --set-string infra.postgresql.env.POSTGRES_DB="${{ vars.POSTGRES_DATABASE }}" \
+            --set-string infra.mongodb.env.MONGO_INITDB_ROOT_USERNAME="${{ secrets.MONGO_INITDB_ROOT_USERNAME }}" \
+            --set-string infra.mongodb.env.MONGO_INITDB_ROOT_PASSWORD="${{ secrets.MONGO_INITDB_ROOT_PASSWORD }}" \
+            --set-string infra.mongodb.env.MONGO_USER="${{ secrets.MONGO_USER }}" \
+            --set-string infra.mongodb.env.MONGO_PASSWORD="${{ secrets.MONGO_PASSWORD }}" \
+            --set-string infra.mongodb.env.MONGO_DATABASE="${{ vars.MONGO_DATABASE }}"

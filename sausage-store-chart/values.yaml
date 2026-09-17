@@ -15,11 +15,11 @@ frontend:
     port: 80
   containerPort: 80
   ingress:
-    host: front-ypenjoyer333.students-projects.ru
+    host: front-ypenjoyer333.2sem.students-projects.ru
     path: /
     pathType: Prefix
     tls:
-      secretName: example-secret # note: override me in CI
+      secretName: 2sem-students-projects-wildcard-secret
   image:
     name: ypenjoyer333/sausage-frontend
     tag: latest
