@@ -163,7 +163,7 @@ infra:
     resources:
       requests:
         cpu: "75m"
-        memory: "384Mi"
+        memory: "256Mi"
       limits:
         cpu: "150m"
         memory: "512Mi"
