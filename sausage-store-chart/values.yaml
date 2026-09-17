@@ -169,8 +169,8 @@ infra:
         memory: "192Mi"
     initJobResources:
       requests:
-        cpu: "25m"
-        memory: "64Mi"
-      limits:
-        cpu: "100m"
+        cpu: "50m"
         memory: "128Mi"
+      limits:
+        cpu: "150m"
+        memory: "384Mi"
