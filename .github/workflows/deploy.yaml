@@ -175,7 +175,7 @@ jobs:
             --namespace "$SAUSAGE_STORE_NAMESPACE" \
             --version "$CHART_VERSION" \
             --wait \
-            --timeout 10m
+            --timeout 10m \
             --set-string backend.image.tag="$IMAGE_TAG" \
             --set-string frontend.image.tag="$IMAGE_TAG" \
             --set-string backend-report.image.tag="$IMAGE_TAG" \
