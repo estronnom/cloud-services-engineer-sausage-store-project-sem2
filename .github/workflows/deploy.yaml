@@ -9,7 +9,7 @@ env:
   NEXUS_HELM_REPO: ${{ secrets.NEXUS_HELM_REPO }}
   NEXUS_HELM_REPO_USER: ${{ secrets.NEXUS_HELM_REPO_USER }}
   NEXUS_HELM_REPO_PASSWORD: ${{ secrets.NEXUS_HELM_REPO_PASSWORD }}
-  SAUSAGE_STORE_NAMESPACE: YOUR_NAMESPACE
+  SAUSAGE_STORE_NAMESPACE: ${{ secrets.NAMESPACE }}
   KUBE_CONFIG: ${{ secrets.KUBE_CONFIG }}
   VAULT_TOKEN: ${{ secrets.VAULT_TOKEN }}
 
@@ -18,14 +18,24 @@ jobs:
   build_and_push_to_docker_hub:
       name: Push Docker image to DockerHub
       runs-on: ubuntu-latest
+      outputs:
+        image_tag:
+          ${{ steps.image_tag.outputs.tag }}
       steps:
+        - name: Create image tag
+          id: image_tag
+          shell: bash
+          run: |
+            short_sha="${GITHUB_SHA:0:7}"
+            ref="${GITHUB_REF_NAME//\//-}"
+            echo "tag=${ref}-${short_sha}" >> "$GITHUB_OUTPUT"
         - name: Check out the repo
           # Получение исходного кода из репозитория:
           uses: actions/checkout@v3
         - name: Set up Docker Buildx
           # Установка сборщика контейнеров Docker:
           uses: docker/setup-buildx-action@v2
-        - name: Login to Docker 
+        - name: Login to Docker
           # Авторизация на Docker Hub:
           uses: docker/login-action@v2
           # При помощи with передаём в action параметры username и password:
@@ -38,39 +48,37 @@ jobs:
           # Одновременный билд и пуш образа в Docker Hub:
           uses: docker/build-push-action@v4
           with:
-            # Параметр context: ./backend/ указывает, что нужный Dockerfile 
+            # Параметр context: ./backend/ указывает, что нужный Dockerfile
             # находится в ./backend/
             context: ./backend/
             # Параметр push: true указывает, что образ нужно не только собрать,
             # но и отправить на Docker Hub:
             push: true
             # В параметре tags задаётся название и тег для образа.
-            # Для каждого пересобранного образа 
-            # устанавливаем тег latest, чтобы потом
-            # на сервере и в docker-compose.yml не указывать версию образа:
-            tags: YOUR_DOCKERHUB/sausage-backend:latest
+            tags: ${{ secrets.DOCKER_USER }}/sausage-backend:${{ steps.image_tag.outputs.tag }}
             build-args: |
-              VERSION=${{ github.sha }}
+              VERSION=${{ steps.image_tag.outputs.tag }}
         - name: Push Frontend to DockerHub
           uses: docker/build-push-action@v4
           with:
             context: ./frontend/
             push: true
-            tags: YOUR_DOCKERHUB/sausage-frontend:latest
+            tags: ${{ secrets.DOCKER_USER }}/sausage-frontend:${{ steps.image_tag.outputs.tag }}
         - name: Push Backend-report to DockerHub
           uses: docker/build-push-action@v4
           with:
             context: ./backend-report/
             push: true
-            tags: YOUR_DOCKERHUB/sausage-backend-report:latest
+            tags: ${{ secrets.DOCKER_USER }}/sausage-backend-report:${{ steps.image_tag.outputs.tag }}
   # Упаковываем helm-чарт и пушим его в Nexus
   add_helm_chart_to_nexus:
       name: Add Helm Chart To Nexus
       runs-on: ubuntu-latest
       needs: build_and_push_to_docker_hub
-
+# ${{ needs.build_and_push_to_docker_hub.outputs.image_tag }}
       steps:
       #### Опишите необходимые шаги
+      # todo add helm lint
 
   # Деплоим приложения в кластер Kubernetes с помощью helm-чарт
   deploy_helm_chart_to_kubernetes:

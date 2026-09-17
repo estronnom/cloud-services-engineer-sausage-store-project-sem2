@@ -2,8 +2,6 @@ apiVersion: apps/v1
 kind: StatefulSet
 metadata:
   name: mongodb
-  annotations:
-    helm.sh/hook-weight: "-5"
 spec:
   serviceName: mongodb
   replicas: 1
@@ -18,17 +16,21 @@ spec:
       containers:
       - name: mongodb
         image: mongo:7.0
-        envFrom:
-          - configMapRef:
-              name: mongodb-conf
+        env:
+          - name: MONGO_INITDB_ROOT_USERNAME
+            valueFrom:
+              configMapKeyRef:
+                name: mongodb-conf
+                key: mongo_initdb_root_username
+          - name: MONGO_INITDB_ROOT_PASSWORD
+            valueFrom:
+              secretKeyRef:
+                name: mongodb-secret
+                key: mongo_initdb_root_password
         ports:
         - containerPort: {{ .Values.mongodb.containerPort }}
         resources:
-          requests:
-            memory: "128Mi"
-            cpu: "50m"
-          limits:
-            memory: "256Mi"
+          {{- toYaml .Values.mongodb.resources | nindent 10 }}
         volumeMounts:
         - name: mongodb-data
           mountPath: /data/db
@@ -39,7 +41,7 @@ spec:
       accessModes: [ "ReadWriteOnce" ]
       resources:
         requests:
-          storage: 1Gi
+          storage: {{ .Values.mongodb.storage }}
 ---
 apiVersion: v1
 kind: Service
@@ -49,7 +51,7 @@ metadata:
     app: mongodb
 spec:
   ports:
-  - port: {{ .Values.mongodb.containerPort }}
+  - port: {{ .Values.mongodb.servicePort }}
     targetPort: {{ .Values.mongodb.containerPort }}
   selector:
     app: mongodb
@@ -60,5 +62,94 @@ kind: ConfigMap
 metadata:
   name: mongodb-conf
 data:
-  MONGO_INITDB_ROOT_USERNAME: {{ .Values.mongodb.env.MONGO_INITDB_ROOT_USERNAME }}
-  MONGO_INITDB_ROOT_PASSWORD: {{ .Values.mongodb.env.MONGO_INITDB_ROOT_PASSWORD }}
+  mongo_initdb_root_username: "{{ .Values.mongodb.env.MONGO_INITDB_ROOT_USERNAME }}"
+  mongo_user: "{{ .Values.mongodb.env.MONGO_USER }}"
+  mongo_database: "{{ .Values.mongodb.env.MONGO_DATABASE }}"
+  mongo_port: "{{ .Values.mongodb.servicePort }}"
+---
+apiVersion: v1
+kind: Secret
+metadata:
+  name: mongodb-secret
+stringData:
+  mongo_initdb_root_password: {{ .Values.mongodb.env.MONGO_INITDB_ROOT_PASSWORD | quote }}
+  mongo_password: {{ .Values.mongodb.env.MONGO_PASSWORD | quote }}
+---
+apiVersion: batch/v1
+kind: Job
+metadata:
+  name: mongodb-init-job
+  annotations:
+    helm.sh/hook: post-install
+    helm.sh/hook-weight: "5"
+spec:
+  backoffLimit: 5
+  template:
+    spec:
+      restartPolicy: OnFailure
+      containers:
+        - name: mongodb-init
+          image: mongo:7.0
+          env:
+            - name: MONGO_INITDB_ROOT_USERNAME
+              valueFrom:
+                configMapKeyRef:
+                  name: mongodb-conf
+                  key: mongo_initdb_root_username
+            - name: MONGO_INITDB_ROOT_PASSWORD
+              valueFrom:
+                secretKeyRef:
+                  name: mongodb-secret
+                  key: mongo_initdb_root_password
+            - name: MONGO_USER
+              valueFrom:
+                configMapKeyRef:
+                  name: mongodb-conf
+                  key: mongo_user
+            - name: MONGO_DATABASE
+              valueFrom:
+                configMapKeyRef:
+                  name: mongodb-conf
+                  key: mongo_database
+            - name: MONGO_PASSWORD
+              valueFrom:
+                secretKeyRef:
+                  name: mongodb-secret
+                  key: mongo_password
+            - name: MONGO_PORT
+              valueFrom:
+                configMapKeyRef:
+                  name: mongodb-conf
+                  key: mongo_port
+          resources:
+            {{- toYaml .Values.mongodb.initJobResources | nindent 12 }}
+          command: ["/bin/sh", "-ec"]
+          args:
+            - |
+              export MONGO_ROOT_URI="mongodb://${MONGO_INITDB_ROOT_USERNAME}:${MONGO_INITDB_ROOT_PASSWORD}@mongodb:${MONGO_PORT}/admin"
+
+              attempt=0
+              until mongosh "$MONGO_ROOT_URI" --quiet --eval 'db.adminCommand({ ping: 1 })' >/dev/null 2>&1
+              do
+                attempt=$((attempt + 1))
+
+                if [ "$attempt" -ge 60 ]; then
+                  echo "MongoDB did not become ready within 120 seconds"
+                  exit 1
+                fi
+
+                echo "Waiting for MongoDB..."
+                sleep 2
+              done
+
+              mongosh "$MONGO_ROOT_URI" --quiet --eval '
+                const appDb = db.getSiblingDB(process.env.MONGO_DATABASE);
+
+                if (appDb.getUser(process.env.MONGO_USER) == null) {
+                  appDb.createUser({
+                    user: process.env.MONGO_USER,
+                    pwd: process.env.MONGO_PASSWORD,
+                    roles: [{ role: "readWrite", db: process.env.MONGO_DATABASE }]
+                  });
+                }
+              '
