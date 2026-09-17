@@ -142,6 +142,7 @@ jobs:
     name: Deploy Helm chart to Kubernetes
     runs-on: ubuntu-latest
     needs:
+      - build_and_push_to_docker_hub
       - add_helm_chart_to_nexus
     steps:
       - name: Set up Helm
@@ -175,17 +176,15 @@ jobs:
             --namespace "$SAUSAGE_STORE_NAMESPACE" \
             --version "$CHART_VERSION" \
             --wait \
-            --timeout 10m \
+            --timeout 5m \
             --set-string backend.image.tag="$IMAGE_TAG" \
             --set-string frontend.image.tag="$IMAGE_TAG" \
             --set-string backend-report.image.tag="$IMAGE_TAG" \
             --set-string backend.env.POSTGRES_URI="jdbc:postgresql://postgresql:5432/${{ vars.POSTGRES_DATABASE }}" \
             --set-string backend.env.POSTGRES_USER="${{ secrets.POSTGRES_USER }}" \
             --set-string backend.env.POSTGRES_PASSWORD="${{ secrets.POSTGRES_PASSWORD }}" \
-            --set-string backend.env.MONGODB_URI="mongodb://${{ secrets.MONGO_USER }}:${{ secrets.MONGO_PASSWORD }}@mongodb:27017/
-            ${{ vars.MONGO_DATABASE }}" \
-            --set-string backend-report.env.MONGODB_URI="mongodb://${{ secrets.MONGO_USER }}:${{ secrets.MONGO_PASSWORD }}@mongodb:27017/
-            ${{ vars.MONGO_DATABASE }}" \
+            --set-string backend.env.MONGODB_URI="mongodb://${{ secrets.MONGO_USER }}:${{ secrets.MONGO_PASSWORD }}@mongodb:27017/${{ vars.MONGO_DATABASE }}" \
+            --set-string backend-report.env.MONGODB_URI="mongodb://${{ secrets.MONGO_USER }}:${{ secrets.MONGO_PASSWORD }}@mongodb:27017/${{ vars.MONGO_DATABASE }}" \
             --set-string infra.postgresql.env.POSTGRES_USER="${{ secrets.POSTGRES_USER }}" \
             --set-string infra.postgresql.env.POSTGRES_PASSWORD="${{ secrets.POSTGRES_PASSWORD }}" \
             --set-string infra.postgresql.env.POSTGRES_DB="${{ vars.POSTGRES_DATABASE }}" \
